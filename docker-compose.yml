@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: churn
+      POSTGRES_USER: churn
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-password}
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churn -d churn"]
+      interval: 5s
+      retries: 10
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql+psycopg://churn:${POSTGRES_PASSWORD:-local-development-password}@db:5432/churn
+      API_KEY: ${API_KEY:?Set API_KEY in .env}
+      ORGANIZATION_NAME: ${ORGANIZATION_NAME:-Portfolio demo}
+      CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data/raw:/app/data/raw:ro
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    environment:
+      API_URL: http://api:8000
+      API_KEY: ${API_KEY:?Set API_KEY in .env}
+      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:?Set DASHBOARD_USERNAME in .env}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env}
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  postgres_data:
