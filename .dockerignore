@@ -1,0 +1,9 @@
+.git
+.venv
+*.egg-info
+apps/web/node_modules
+apps/web/.next
+data/raw
+artifacts
+*.db
+.env
