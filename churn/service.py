@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 import joblib
 import pandas as pd
-from uuid import uuid4
-
 from sqlalchemy import func, insert, select
 from sqlalchemy.orm import Session
 

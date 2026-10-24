@@ -158,12 +158,21 @@ def inspect_csv(path: Path, source_kind: str, definition: ChurnDefinition = BANK
         issues.add("empty_file", "error", "File is empty")
         return finish()
 
-    header = next(csv.reader(io.StringIO(text)))
+    records = [row for row in csv.reader(io.StringIO(text)) if row]
+    header = records[0]
     repeated = sorted({name for name in header if header.count(name) > 1})
     if repeated:
         issues.add("duplicate_columns", "error", f"Repeated column names: {repeated}")
+    # pandas would silently shift columns into an implicit index when a row has extra fields,
+    # so field counts are checked explicitly before parsing.
+    ragged = pd.Series([len(row) != len(header) for row in records[1:]], dtype=bool)
+    if ragged.any():
+        issues.add("malformed_csv", "error",
+                   f"{int(ragged.sum())} row(s) do not have {len(header)} fields",
+                   count=int(ragged.sum()), rows=_rows(ragged))
+        return finish()
     try:
-        raw_frame = pd.read_csv(io.StringIO(text), dtype=str, on_bad_lines="error")
+        raw_frame = pd.read_csv(io.StringIO(text), dtype=str, on_bad_lines="error", index_col=False)
     except (pd.errors.ParserError, pd.errors.EmptyDataError) as exc:
         issues.add("malformed_csv", "error", f"CSV could not be parsed: {exc}")
         return finish()

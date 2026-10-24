@@ -19,23 +19,24 @@ def test_validation_rejects_duplicate_ids(tmp_path):
     text = path.read_text().splitlines()
     text[2] = text[1]
     path.write_text("\n".join(text) + "\n")
-    with pytest.raises(DataQualityError, match="Duplicate"):
-        validate_csv(path)
+    with pytest.raises(DataQualityError, match="duplicated identifier"):
+        validate_csv(path, "synthetic")
 
 
 def test_training_to_dashboard_and_auth(tmp_path, monkeypatch):
     path = make_demo_data(tmp_path / "demo.csv")
-    report = train(path, tmp_path / "artifacts")
+    report = train(path, tmp_path / "artifacts", "synthetic")
     assert report["held_out_test"]["test_rows"] == 120
     assert set(report["validation"]) == {"dummy", "logistic_regression"}
-    assert report["dataset_sha256"] == validate_csv(path).sha256
+    assert report["dataset"]["sha256"] == validate_csv(path, "synthetic").sha256
     assert report["definition"]["prediction_horizon"] is None
 
     factory, engine = session_factory(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
     with factory() as session:
         dataset = import_dataset(session, path, "Portfolio demo", "synthetic")
-        model = register_model(session, tmp_path / "artifacts" / f"{report['version']}.json")
+        model = register_model(session, tmp_path / "artifacts" / f"{report['version']}.json",
+                               "Portfolio demo")
         customers = session.scalars(select(Customer).where(Customer.dataset_id == dataset.id)).all()
         assert score_customers(session, list(customers), model) == 600
 
@@ -60,4 +61,4 @@ def test_training_to_dashboard_and_auth(tmp_path, monkeypatch):
         assert all(item["prediction"]["risk_band"] == band for item in filtered["items"])
         assert filtered["total"] >= len(filtered["items"])
         assert client.get(f"/api/v1/customers/{customer['id']}", headers=headers).status_code == 200
-    assert json.loads((tmp_path / "artifacts" / f"{report['version']}.json").read_text())["dataset_rows"] == 600
+    assert json.loads((tmp_path / "artifacts" / f"{report['version']}.json").read_text())["dataset"]["rows"] == 600
