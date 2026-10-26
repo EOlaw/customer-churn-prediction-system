@@ -9,21 +9,13 @@ from sqlalchemy import select
 
 from churn import api
 from churn.config import BANKING
-from churn.db import Base, Customer, Dataset, session_factory
-from churn.demo import make_demo_data
+from churn.db import Customer, Dataset, session_factory
+from churn.migrate import init_schema
 from churn.ml.contract import IGNORED_COLUMNS
 from churn.ml.data import validate_csv
 from churn.ml.lineage import file_sha256, id_fingerprint
 from churn.ml.train import train
 from churn.service import import_dataset, register_model, score_customer, score_customers
-
-
-@pytest.fixture(scope="module")
-def trained(tmp_path_factory):
-    root = tmp_path_factory.mktemp("lineage")
-    csv_path = make_demo_data(root / "demo.csv")
-    report = train(csv_path, root / "artifacts", "synthetic")
-    return csv_path, root / "artifacts", report
 
 
 @pytest.fixture
@@ -32,7 +24,7 @@ def workspace(trained, tmp_path):
     copy = tmp_path / "artifacts"
     shutil.copytree(artifacts, copy)
     factory, engine = session_factory(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
+    init_schema(engine)
     return csv_path, copy / f"{report['version']}.json", report, factory, engine
 
 
@@ -49,9 +41,9 @@ def test_training_report_traces_to_validated_dataset(trained):
         "sha256": validated.sha256, "rows": 600, "source_kind": "synthetic",
         "contract_version": validated.contract_version, "quality_status": "passed",
         "quality_report_sha256": validated.report_sha256}
-    assert report["version"].endswith(validated.sha256[:12])
+    assert f"-{validated.sha256[:12]}-" in report["version"]
     assert report["artifact_sha256"] == file_sha256(artifacts / f"{report['version']}.joblib")
-    assert report["split"]["rows"] == {"train": 360, "validation": 120, "test": 120}
+    assert report["split"]["rows"] == {"train": 360, "calibration": 120, "test": 120}
     assert any("SYNTHETIC" in item for item in report["limitations"])
 
 
@@ -59,7 +51,7 @@ def test_split_is_disjoint_complete_and_reproducible(trained, tmp_path):
     csv_path, _, report = trained
     fingerprints = report["split"]["customer_id_sha256"]
     assert len(set(fingerprints.values())) == 3
-    again = train(csv_path, tmp_path / "again", "synthetic")
+    again = train(csv_path, tmp_path / "again", "synthetic", resamples=100)
     assert again["split"] == report["split"]
     assert again["held_out_test"] == report["held_out_test"]
     ids = validate_csv(csv_path, "synthetic").frame[BANKING.customer_id_column]
@@ -122,7 +114,7 @@ def test_registration_is_scoped_to_the_organization(workspace):
 def test_old_report_schema_is_rejected(workspace):
     _, report_path, _, factory, _ = workspace
     edit_report(report_path, lambda r: r.pop("report_schema_version"))
-    with factory() as session, pytest.raises(ValueError, match="predates dataset lineage"):
+    with factory() as session, pytest.raises(ValueError, match="predates split/evaluation lineage"):
         register_model(session, report_path, "Org A")
 
 
