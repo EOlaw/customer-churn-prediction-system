@@ -30,13 +30,15 @@ There is no observation date, feature cutoff, or horizon, so the report records 
 
 ## 5. Split strategy
 
-- Stratified random 60/20/20 (seed 42), fixed and recorded as `split` in every training report with partition sizes and SHA-256 fingerprints of the sorted customer IDs per partition. Training asserts the partitions are disjoint and cover every row.
+- Stratified random 60/20/20 (seed 42) computed from customer IDs in sorted order (so file row order cannot change assignments), recorded as `split` in every training report with partition sizes and SHA-256 fingerprints of the customer IDs per partition, and stored per customer in the database at registration. Training asserts the partitions are disjoint and cover every row.
 - Preprocessing (median imputation, scaling, one-hot) lives inside the pipeline and is fitted on training rows only. Defect fixed: both candidate pipelines previously shared a single preprocessor object; each now gets its own clone.
-- The test partition is scored once for the validation-selected model. With two candidates the selection effect is small but nonzero.
+- Phase 3 replaces the earlier train/validation/test design with train / calibration / test. Candidate comparison uses cross-validation inside the training partition; the calibration partition fits the calibrator and threshold; the test partition is evaluated once (details in [the ML methodology](banking-ml-methodology.md)).
 - Rows duplicating another row's features and label under a different ID are reported (`duplicate_feature_rows`) because a random split can place copies in both train and test and inflate scores.
 - A random split is only valid for exchangeable, one-row-per-customer data. It says nothing about drift across time.
 
-## 6. Open leakage-adjacent risks
+## 6. Leakage-adjacent risks
 
-- `score-all` scores every imported customer, including the 60% used to train and the 20% used for selection. Dashboard score summaries therefore mix in-sample and held-out rows and are optimistic. Partition membership is fingerprinted but not stored per customer.
+- **Resolved in Phase 3:** `score-all` scores every imported customer, including those used for training and calibration. Each customer's partition is now stored per training run (`split_assignments`), batch scores are labelled `retrospective_batch`, and the API and dashboard report scores per partition. Training and calibration scores are marked in-sample, no pooled mean score is shown, segment means use held-out test customers only, and the risk chart defaults to the test partition. Rows migrated from older schemas have no recorded split and are shown as "No split recorded · unverified".
+- **Sensitivity analysis for uncertain availability (Phase 3):** the model is refit without `Tenure`, `Balance`, `NumOfProducts`, `IsActiveMember`, and `HasCrCard` (the features in section 3 that may be consequences of exit), and without `Gender`, `Age`, `Geography`. The comparison is reported with paired-bootstrap intervals and never used to select the model. A small drop does not prove the features are leak-free, and a large one does not prove they leak; only dated data can settle availability.
+- Duplicate-feature rows can still straddle partitions (reported as `duplicate_feature_rows`).
 - The synthetic generator draws `Exited` from a formula of the features, so synthetic metrics reflect that formula, not any banking behavior.

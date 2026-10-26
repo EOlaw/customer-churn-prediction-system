@@ -12,7 +12,10 @@ The platform owns reusable ingestion contracts, persistence, serving, and dashbo
 | `datasets` | `organization_id → organizations.id`, unique `(organization_id, sha256)` | Source version: definition key, `source_kind`, `contract_version`, `quality_status`, full `quality_report` JSON and its hash |
 | `customers` | `organization_id → organizations.id`, `dataset_id → datasets.id`, unique `(organization_id, external_id)` | Validated source attributes and observed exit |
 | `model_versions` | `dataset_id → datasets.id` | Versioned artifact and its SHA-256, dataset/split `lineage` copied from the training report, test metrics, lifecycle status |
-| `predictions` | `customer_id → customers.id`, `model_id → model_versions.id` | Probability, risk band, and UTC scoring timestamp |
+| `predictions` | `customer_id → customers.id`, `model_id → model_versions.id` | Retrospective score, risk band, UTC scoring timestamp, `score_kind` (NULL = legacy) |
+| `split_assignments` | PK `(model_id, customer_id)` | Partition (`train`, `calibration`, `test`) of each customer for one training run |
+| `evaluation_predictions` | PK `(model_id, customer_id)` | Out-of-sample probabilities from training (calibration: cross-fitted; test: final), kept apart from `predictions` |
+| `schema_migrations` | PK `version` | Applied migrations |
 
 Every customer read is filtered by organization. Model registration is a trusted local operation and ties a model to an imported dataset hash. A production extension should add memberships, roles, audit logs, training runs, intervention/outcome records, batch jobs, and schema migrations when their workflows exist.
 
@@ -36,11 +39,13 @@ Rules the code enforces: the file is hashed and parsed from one read; a failing 
 
 Known scale limits: CSVs are read into memory (capped at 50 MiB); customers are bulk-inserted in one transaction; analytics endpoints still aggregate in Python. Replace these with chunked loading and SQL aggregation before multi-million-row use.
 
+## Migrations
+
+[churn/migrate.py](../churn/migrate.py) holds ordered, add-only migrations. `init-db` creates the latest schema in an empty database and stamps it; on an older database it refuses. `migrate` detects unversioned legacy schemas from their columns, backs up SQLite files, applies pending migrations in separate transactions, and never back-fills lineage. The API checks the schema at startup. Moving to Alembic later is straightforward because versions and DDL are already explicit.
+
 ## ML methodology
 
-`CustomerId`, `Surname`, and `RowNumber` are excluded from features. Preprocessing is inside the fitted pipeline. Data are split 60% train, 20% validation, and 20% held-out test with fixed stratification. A dummy prior baseline and class-weighted logistic regression are compared on validation PR-AUC; the selected pipeline is measured once on test. The reported Brier score provides a first calibration diagnostic, but no calibration claim is made. The source has one row per customer, so a temporal evaluation is impossible. If multiple dated observations are added, use grouped temporal splits with a feature cutoff before the label window.
-
-Risk bands 0.30/0.60/0.80 are illustrative configuration. They do not represent validated campaign capacities or expected intervention benefit.
+The full protocol, metrics, and prospective-prediction requirements are in [banking-ml-methodology.md](banking-ml-methodology.md). In short: deterministic train / calibration / test partitions; candidate comparison by cross-validation on training rows only; calibrator choice, calibrator fit, and decision threshold on the calibration partition; one held-out evaluation with bootstrap intervals; sensitivity analyses and subgroup slices reported but not used for selection. `CustomerId`, `Surname`, and `RowNumber` are never features. Risk bands 0.30/0.60/0.80 are illustrative configuration, unrelated to the evaluated threshold or any validated campaign capacity.
 
 ## Future monitoring
 

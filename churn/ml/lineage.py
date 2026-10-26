@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 SPLIT_SEED = 42
 
 

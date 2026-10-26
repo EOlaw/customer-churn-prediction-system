@@ -22,3 +22,14 @@ def write_csv(tmp_path):
         frame.to_csv(path, index=False)
         return path
     return write
+
+
+@pytest.fixture(scope="session")
+def trained(tmp_path_factory):
+    """One synthetic end-to-end training run shared by read-only tests (fast bootstrap)."""
+    from churn.ml.train import train
+
+    root = tmp_path_factory.mktemp("trained")
+    csv_path = make_demo_data(root / "demo.csv")
+    report = train(csv_path, root / "artifacts", "synthetic", resamples=100)
+    return csv_path, root / "artifacts", report
